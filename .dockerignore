@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.env.*
+node_modules
+build
+.svelte-kit
+README.md
+*.md
+.vscode
+.eslintrc*
+eslint.config.*
+prettier.config.*
+.prettierrc
