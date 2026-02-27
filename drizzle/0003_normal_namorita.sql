@@ -1,0 +1,1 @@
+ALTER TABLE "expense" ADD COLUMN "is_prorata" boolean DEFAULT false NOT NULL;
