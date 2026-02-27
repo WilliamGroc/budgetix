@@ -1,6 +1,5 @@
 FROM node:22-alpine
 
-ARG DATABASE_URL
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
@@ -10,10 +9,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Copier les sources et builder l'application
+# DATABASE_URL fictive pour satisfaire la vérification au chargement du module
+# (postgres.js ne se connecte pas réellement avant la première requête)
 COPY . .
-RUN pnpm build
+RUN DATABASE_URL=postgresql://build:build@localhost/build pnpm build
 
 # Variables d'environnement requises
+# DATABASE_URL=postgres://user:password@host:5432/dbname
 # BETTER_AUTH_SECRET=<secret>
 # BETTER_AUTH_URL=http://localhost:3000
 
