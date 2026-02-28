@@ -12,7 +12,7 @@ RUN pnpm install --frozen-lockfile
 # DATABASE_URL fictive pour satisfaire la vérification au chargement du module
 # (postgres.js ne se connecte pas réellement avant la première requête)
 COPY . .
-RUN DATABASE_URL=postgresql://build:build@localhost/build pnpm build
+RUN pnpm build
 
 # Variables d'environnement requises
 # DATABASE_URL=postgres://user:password@host:5432/dbname

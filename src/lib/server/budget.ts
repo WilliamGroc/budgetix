@@ -1,19 +1,27 @@
-import { db } from './db';
-import { bankAccount, bankAccountShare, income, expense, expenseParticipant, userLink, scheduledTransfer } from './db/schema';
+import { getDb } from './db';
+import {
+  bankAccount,
+  bankAccountShare,
+  income,
+  expense,
+  expenseParticipant,
+  userLink,
+  scheduledTransfer,
+  user
+} from './db/schema';
 import { eq, and, or } from 'drizzle-orm';
-import { user } from './db/schema';
 
 // ─── Comptes ──────────────────────────────────────────────────────────────────
 
 /** Comptes possédés + comptes partagés avec cet utilisateur */
 export async function getAccounts(userId: string) {
   const [owned, sharedRows] = await Promise.all([
-    db.query.bankAccount.findMany({
+    getDb().query.bankAccount.findMany({
       where: eq(bankAccount.userId, userId),
       with: { shares: { with: { sharedWithUser: true } } },
       orderBy: bankAccount.createdAt
     }),
-    db.query.bankAccountShare.findMany({
+    getDb().query.bankAccountShare.findMany({
       where: eq(bankAccountShare.sharedWithUserId, userId),
       with: { bankAccount: { with: { user: true } } }
     })
@@ -32,7 +40,7 @@ export async function createAccount(
   userId: string,
   data: { name: string; type: 'personal' | 'savings' | 'common'; initialBalance: string; color?: string }
 ) {
-  return db.insert(bankAccount).values({ userId, ...data }).returning();
+  return getDb().insert(bankAccount).values({ userId, ...data }).returning();
 }
 
 export function updateAccount(
@@ -40,17 +48,17 @@ export function updateAccount(
   id: number,
   data: { name: string; type: 'personal' | 'savings' | 'common'; initialBalance: string; color?: string; currentBalance?: string | null }
 ) {
-  return db.update(bankAccount).set(data).where(and(eq(bankAccount.id, id), eq(bankAccount.userId, userId)));
+  return getDb().update(bankAccount).set(data).where(and(eq(bankAccount.id, id), eq(bankAccount.userId, userId)));
 }
 
 export function deleteAccount(userId: string, id: number) {
-  return db.delete(bankAccount).where(and(eq(bankAccount.id, id), eq(bankAccount.userId, userId)));
+  return getDb().delete(bankAccount).where(and(eq(bankAccount.id, id), eq(bankAccount.userId, userId)));
 }
 
 /** Partage un compte avec un utilisateur lié (validation du lien côté service) */
 export async function shareAccount(ownerId: string, accountId: number, targetUserId: string) {
   // Vérifier que les deux sont bien liés
-  const link = await db.query.userLink.findFirst({
+  const link = await getDb().query.userLink.findFirst({
     where: and(
       eq(userLink.status, 'accepted'),
       or(
@@ -62,13 +70,13 @@ export async function shareAccount(ownerId: string, accountId: number, targetUse
   if (!link) throw new Error('Vous devez être lié à cet utilisateur pour partager un compte.');
 
   // Vérifier que le compte appartient bien à l'émetteur
-  const acc = await db.query.bankAccount.findFirst({
+  const acc = await getDb().query.bankAccount.findFirst({
     where: and(eq(bankAccount.id, accountId), eq(bankAccount.userId, ownerId))
   });
   if (!acc) throw new Error('Compte introuvable.');
 
   // Éviter les doublons
-  const existing = await db.query.bankAccountShare.findFirst({
+  const existing = await getDb().query.bankAccountShare.findFirst({
     where: and(
       eq(bankAccountShare.bankAccountId, accountId),
       eq(bankAccountShare.sharedWithUserId, targetUserId)
@@ -76,7 +84,7 @@ export async function shareAccount(ownerId: string, accountId: number, targetUse
   });
   if (existing) return existing;
 
-  const [row] = await db
+  const [row] = await getDb()
     .insert(bankAccountShare)
     .values({ bankAccountId: accountId, sharedWithUserId: targetUserId })
     .returning();
@@ -85,12 +93,12 @@ export async function shareAccount(ownerId: string, accountId: number, targetUse
 
 /** Supprime un partage (seul le propriétaire peut le faire) */
 export async function unshareAccount(ownerId: string, accountId: number, targetUserId: string) {
-  const acc = await db.query.bankAccount.findFirst({
+  const acc = await getDb().query.bankAccount.findFirst({
     where: and(eq(bankAccount.id, accountId), eq(bankAccount.userId, ownerId))
   });
   if (!acc) throw new Error('Compte introuvable ou non autorisé.');
 
-  return db
+  return getDb()
     .delete(bankAccountShare)
     .where(
       and(
@@ -103,7 +111,7 @@ export async function unshareAccount(ownerId: string, accountId: number, targetU
 // ─── Revenus ─────────────────────────────────────────────────────────────────
 
 export function getIncomes(userId: string) {
-  return db.query.income.findMany({
+  return getDb().query.income.findMany({
     where: eq(income.userId, userId),
     with: { bankAccount: true },
     orderBy: income.createdAt
@@ -114,7 +122,7 @@ export function createIncome(
   userId: string,
   data: { bankAccountId: number; label: string; amount: string; dayOfMonth: number }
 ) {
-  return db.insert(income).values({ userId, ...data }).returning();
+  return getDb().insert(income).values({ userId, ...data }).returning();
 }
 
 export function updateIncome(
@@ -122,11 +130,11 @@ export function updateIncome(
   id: number,
   data: { bankAccountId: number; label: string; amount: string; dayOfMonth: number }
 ) {
-  return db.update(income).set(data).where(and(eq(income.id, id), eq(income.userId, userId)));
+  return getDb().update(income).set(data).where(and(eq(income.id, id), eq(income.userId, userId)));
 }
 
 export function deleteIncome(userId: string, id: number) {
-  return db.delete(income).where(and(eq(income.id, id), eq(income.userId, userId)));
+  return getDb().delete(income).where(and(eq(income.id, id), eq(income.userId, userId)));
 }
 
 // ─── Dépenses ────────────────────────────────────────────────────────────────
@@ -138,7 +146,7 @@ export function deleteIncome(userId: string, id: number) {
  * Si aucun revenu n'est trouvé, répartition égale.
  */
 export async function computeProrataShares(userIds: string[]): Promise<Map<string, number>> {
-  const personalAccounts = await db.query.bankAccount.findMany({
+  const personalAccounts = await getDb().query.bankAccount.findMany({
     where: eq(bankAccount.type, 'personal'),
     with: { incomes: true }
   });
@@ -166,7 +174,7 @@ export async function computeProrataShares(userIds: string[]): Promise<Map<strin
 }
 
 export function getExpenses() {
-  return db.query.expense.findMany({
+  return getDb().query.expense.findMany({
     with: {
       bankAccount: true,
       participants: { with: { user: true } }
@@ -223,7 +231,7 @@ export async function createExpense(
   }
 ) {
   const { participants, ...expenseData } = data;
-  const [created] = await db.insert(expense).values(expenseData).returning();
+  const [created] = await getDb().insert(expense).values(expenseData).returning();
 
   if (data.isShared) {
     // Toujours inclure l'auteur + les autres participants
@@ -250,7 +258,7 @@ export async function createExpense(
       unique[0].sharePercentage = equal;
     }
 
-    await db.insert(expenseParticipant).values(
+    await getDb().insert(expenseParticipant).values(
       unique.map((p) => ({ expenseId: created.id, userId: p.userId, sharePercentage: p.sharePercentage }))
     );
   }
@@ -258,18 +266,18 @@ export async function createExpense(
 }
 
 export function deleteExpense(id: number) {
-  return db.delete(expense).where(eq(expense.id, id));
+  return getDb().delete(expense).where(eq(expense.id, id));
 }
 
 export function updateExpense(
   id: number,
   data: { bankAccountId: number; label: string; amount: string; category?: string | null; dayOfMonth: number; isRealized?: boolean }
 ) {
-  return db.update(expense).set(data).where(eq(expense.id, id));
+  return getDb().update(expense).set(data).where(eq(expense.id, id));
 }
 
 export function toggleExpenseRealized(id: number, isRealized: boolean) {
-  return db.update(expense).set({ isRealized }).where(eq(expense.id, id));
+  return getDb().update(expense).set({ isRealized }).where(eq(expense.id, id));
 }
 
 // ─── Virements planifiés ──────────────────────────────────────────────────────────
@@ -282,7 +290,7 @@ export async function getTransfers(userId: string) {
   const accounts = await getAccessibleAccounts(userId);
   const accountIds = accounts.map((a) => a.id);
 
-  const all = await db.query.scheduledTransfer.findMany({
+  const all = await getDb().query.scheduledTransfer.findMany({
     with: { fromAccount: true, toAccount: true, user: true },
     orderBy: scheduledTransfer.dayOfMonth
   });
@@ -311,7 +319,7 @@ export async function createTransfer(
   const hasAccess = accessible.some((a) => a.id === data.fromAccountId);
   if (!hasAccess) throw new Error('Compte source inaccessible.');
 
-  const [created] = await db
+  const [created] = await getDb()
     .insert(scheduledTransfer)
     .values({ userId, ...data })
     .returning();
@@ -319,7 +327,7 @@ export async function createTransfer(
 }
 
 export function deleteTransfer(userId: string, id: number) {
-  return db
+  return getDb()
     .delete(scheduledTransfer)
     .where(and(eq(scheduledTransfer.id, id), eq(scheduledTransfer.userId, userId)));
 }
@@ -329,7 +337,7 @@ export function updateTransfer(
   id: number,
   data: { fromAccountId: number; toAccountId: number; label: string; amount: string; dayOfMonth: number }
 ) {
-  return db
+  return getDb()
     .update(scheduledTransfer)
     .set(data)
     .where(and(eq(scheduledTransfer.id, id), eq(scheduledTransfer.userId, userId)));
@@ -339,11 +347,11 @@ export function updateTransfer(
 
 /** Envoie une demande de liaison vers l'email donné (erreur si inexistant ou déjà lié) */
 export async function sendLinkRequest(requesterId: string, receiverEmail: string) {
-  const receiver = await db.query.user.findFirst({ where: eq(user.email, receiverEmail) });
+  const receiver = await getDb().query.user.findFirst({ where: eq(user.email, receiverEmail) });
   if (!receiver) throw new Error('Aucun utilisateur trouvé avec cet email.');
   if (receiver.id === requesterId) throw new Error('Vous ne pouvez pas vous lier à vous-même.');
 
-  const existing = await db.query.userLink.findFirst({
+  const existing = await getDb().query.userLink.findFirst({
     where: or(
       and(eq(userLink.requesterId, requesterId), eq(userLink.receiverId, receiver.id)),
       and(eq(userLink.requesterId, receiver.id), eq(userLink.receiverId, requesterId))
@@ -351,12 +359,12 @@ export async function sendLinkRequest(requesterId: string, receiverEmail: string
   });
   if (existing) throw new Error('Une demande existe déjà avec cet utilisateur.');
 
-  return db.insert(userLink).values({ requesterId, receiverId: receiver.id }).returning();
+  return getDb().insert(userLink).values({ requesterId, receiverId: receiver.id }).returning();
 }
 
 /** Demandes reçues en attente */
 export function getPendingRequests(userId: string) {
-  return db.query.userLink.findMany({
+  return getDb().query.userLink.findMany({
     where: and(eq(userLink.receiverId, userId), eq(userLink.status, 'pending')),
     with: { requester: true }
   });
@@ -364,7 +372,7 @@ export function getPendingRequests(userId: string) {
 
 /** Demandes envoyées */
 export function getSentRequests(userId: string) {
-  return db.query.userLink.findMany({
+  return getDb().query.userLink.findMany({
     where: eq(userLink.requesterId, userId),
     with: { receiver: true }
   });
@@ -372,7 +380,7 @@ export function getSentRequests(userId: string) {
 
 /** Accepte une demande */
 export function acceptLinkRequest(userId: string, linkId: number) {
-  return db
+  return getDb()
     .update(userLink)
     .set({ status: 'accepted' })
     .where(and(eq(userLink.id, linkId), eq(userLink.receiverId, userId)));
@@ -380,7 +388,7 @@ export function acceptLinkRequest(userId: string, linkId: number) {
 
 /** Refuse ou supprime une demande / liaison */
 export function declineLinkRequest(userId: string, linkId: number) {
-  return db
+  return getDb()
     .delete(userLink)
     .where(
       and(
@@ -392,7 +400,7 @@ export function declineLinkRequest(userId: string, linkId: number) {
 
 /** Retourne tous les utilisateurs liés (liaison acceptée) */
 export async function getLinkedUsers(userId: string) {
-  const links = await db.query.userLink.findMany({
+  const links = await getDb().query.userLink.findMany({
     where: and(
       eq(userLink.status, 'accepted'),
       or(eq(userLink.requesterId, userId), eq(userLink.receiverId, userId))
@@ -423,9 +431,9 @@ export async function getCommonAccountSuggestions(userId: string) {
     commonAccounts.map(async (acc) => {
       // Toutes les dépenses, virements sortants et revenus du compte (pas filtrés par utilisateur)
       const [expenses, transfersOut, incomes] = await Promise.all([
-        db.query.expense.findMany({ where: eq(expense.bankAccountId, acc.id) }),
-        db.query.scheduledTransfer.findMany({ where: eq(scheduledTransfer.fromAccountId, acc.id) }),
-        db.query.income.findMany({ where: eq(income.bankAccountId, acc.id) })
+        getDb().query.expense.findMany({ where: eq(expense.bankAccountId, acc.id) }),
+        getDb().query.scheduledTransfer.findMany({ where: eq(scheduledTransfer.fromAccountId, acc.id) }),
+        getDb().query.income.findMany({ where: eq(income.bankAccountId, acc.id) })
       ]);
       const totalExpenses = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
       const totalTransfersOut = transfersOut.reduce((s, t) => s + parseFloat(t.amount), 0);
@@ -433,10 +441,10 @@ export async function getCommonAccountSuggestions(userId: string) {
       const totalToCover = Math.max(0, totalExpenses + totalTransfersOut - totalIncomes);
 
       // Participants = propriétaire + utilisateurs avec accès partagé
-      const owner = await db.query.user.findFirst({
+      const owner = await getDb().query.user.findFirst({
         where: eq(user.id, acc.userId)
       });
-      const shares = await db.query.bankAccountShare.findMany({
+      const shares = await getDb().query.bankAccountShare.findMany({
         where: eq(bankAccountShare.bankAccountId, acc.id),
         with: { sharedWithUser: true }
       });
@@ -493,13 +501,13 @@ export async function getDashboard(userId: string) {
   const enriched = await Promise.all(
     accounts.map(async (acc) => {
       const [incomes, expenses, transfersOut, transfersIn] = await Promise.all([
-        db.query.income.findMany({ where: eq(income.bankAccountId, acc.id) }),
-        db.query.expense.findMany({
+        getDb().query.income.findMany({ where: eq(income.bankAccountId, acc.id) }),
+        getDb().query.expense.findMany({
           where: eq(expense.bankAccountId, acc.id),
           with: { participants: true }
         }),
-        db.query.scheduledTransfer.findMany({ where: eq(scheduledTransfer.fromAccountId, acc.id) }),
-        db.query.scheduledTransfer.findMany({ where: eq(scheduledTransfer.toAccountId, acc.id) })
+        getDb().query.scheduledTransfer.findMany({ where: eq(scheduledTransfer.fromAccountId, acc.id) }),
+        getDb().query.scheduledTransfer.findMany({ where: eq(scheduledTransfer.toAccountId, acc.id) })
       ]);
 
       const totalIncomes = incomes.reduce((s, i) => s + parseFloat(i.amount), 0);
